@@ -4,11 +4,10 @@
     "step": {
       "user": {
         "title": "Connect to Hanchu ESS",
-        "description": "Paste your JWT and encryption key. The integration will discover your stations.",
+        "description": "Paste your JWT and the integration will automatically discover your stations.",
         "data": {
           "jwt": "JWT (access-token)",
           "base_url": "Base URL",
-          "key": "AES key",
           "scan_interval": "Scan interval (seconds)"
         }
       },
@@ -24,6 +23,7 @@
       "token_expired": "Your JWT appears to be expired (check exp claim).",
       "unauthorized": "Unauthorized. JWT invalid or expired.",
       "cannot_connect": "Cannot connect to the API. Check network and settings.",
+      "cannot_resolve_crypto": "Could not discover the Hanchu encryption material.",
       "no_stations": "No stations were found for this account.",
       "invalid_station": "The selected station is no longer available."
     }
@@ -32,11 +32,10 @@
     "step": {
       "init": {
         "title": "Hanchu ESS options",
-        "description": "Update your JWT, encryption key, or polling interval.",
+        "description": "Update your JWT or polling interval.",
         "data": {
           "jwt": "JWT (access-token)",
-          "scan_interval": "Scan interval (seconds)",
-          "key": "Account-specific Hanchu encryption key"
+          "scan_interval": "Scan interval (seconds)"
         }
       },
       "select_station": {

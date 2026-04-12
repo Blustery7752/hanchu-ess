@@ -55,7 +55,6 @@ services for some controls
 The config flow currently asks for:
 
 - `JWT (access-token)`
-- `AES key`
 - `Base URL`
 - `Scan interval`
 
@@ -74,28 +73,14 @@ https://iess3.hanchuess.com/gateway/
 * Click the `Preview` tab in the request pane
 * The JWT is the `data` (not including the quotes)
 
-### Finding Your AES Key
-
-* Once logged in to iESS3, open the Dev Console
-* Open the `Sources` tab
-* Use Find All (CTRL + Shift + F)
-* Search for `AES.encrypt(`
-* Find the line that looks similar to the below, the key will be ~16 characters:
-```
-const n = mo.AES.encrypt(e, mo.enc.Utf8.parse(t), {
-            iv: mo.enc.Utf8.parse("<AES key here>"),
-            mode: mo.mode.CBC
-        });
-```
-
-
 ### Adding the Integration
 
 1. In Home Assistant, go to **Settings > Devices & services**.
 2. Select **Add Integration**.
 3. Search for **Hanchu ESS**.
-4. Enter the required values.
-5. Select the station to use if more than one station is discovered.
+4. Enter your JWT, base URL, and scan interval.
+5. The integration will discover your stations.
+6. Select the station to use if more than one station is discovered.
 
 ## Entities
 
@@ -166,7 +151,6 @@ data:
 After setup, open the integration options to update:
 
 - JWT/access token
-- AES key
 - Scan interval
 - Selected station
 
@@ -186,12 +170,12 @@ Check that:
 
 - Home Assistant can reach the Hanchu ESS cloud API
 - The base URL is correct
-- The JWT and AES key are valid
+- The JWT is valid
 - Your account has at least one station
 
 ## Known Limitations
 
-- Setup currently requires manually supplied API credentials.
+- Setup still requires a manually supplied JWT from an authenticated browser session.
 - The integration depends on an undocumented cloud API that may change.
 - Local inverter communication is not currently supported.
 

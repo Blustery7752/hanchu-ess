@@ -2,8 +2,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
+import re
 import time
 from typing import Any, Dict
+from urllib.parse import urljoin, urlparse
 
 from aiohttp import ClientResponseError, ClientSession
 from aiohttp.client_exceptions import ClientConnectorError
@@ -33,6 +36,30 @@ DEFAULT_DEVICE_SETTING_KEYS = [
     "TDT_END_3",
 ]
 
+AES_HINTS = [
+    "AES.encrypt",
+    "mode.CBC",
+    "Utf8.parse",
+    "CryptoJS",
+]
+
+SCRIPT_RE = re.compile(r"""<script[^>]+src=["']([^"']+\.js[^"']*)["']""", re.I)
+KEY_CANDIDATE_RE = re.compile(
+    r"""
+    AES\.encrypt\s*\(
+        .*?
+        Utf8\.parse\((?P<key>[^)]+)\)
+        .*?
+        iv\s*:\s*.*?Utf8\.parse\((?P<iv>[^)]+)\)
+        .*?
+        mode\s*:\s*.*?CBC
+    """,
+    re.X | re.S,
+)
+STRING_LITERAL_RE = re.compile(r"""['"]([^'"]{8,128})['"]""")
+
+_LOGGER = logging.getLogger(__name__)
+
 
 class HanchuESSApi:
     """Client for the Hanchu ESS API."""
@@ -44,6 +71,7 @@ class HanchuESSApi:
         serial: str | None,
         jwt: str,
         key: str,
+        iv: str | None = None,
         station_id: str | None = None,
     ) -> None:
         if not base_url.endswith("/"):
@@ -53,6 +81,7 @@ class HanchuESSApi:
         self._serial = serial or ""
         self._jwt = jwt
         self._key = key
+        self._iv = iv or key
         self._station_id = station_id or ""
 
     # ---- JWT helpers -----------------------------------------------------
@@ -75,7 +104,7 @@ class HanchuESSApi:
 
     # ---- crypto ----------------------------------------------------------
     def _encrypt_body(self, obj: Any) -> str:
-        iv = self._key.encode("utf-8")
+        iv = self._iv.encode("utf-8")
         key_bytes = self._key.encode("utf-8")
         if not isinstance(obj, str):
             plaintext = json.dumps(obj, separators=(",", ":")).encode("utf-8")
@@ -102,6 +131,145 @@ class HanchuESSApi:
 
     def set_station_id(self, station_id: str) -> None:
         self._station_id = station_id
+
+    @staticmethod
+    def _extract_script_urls(page_url: str, html: str) -> list[str]:
+        urls: set[str] = set()
+        for match in SCRIPT_RE.finditer(html):
+            urls.add(urljoin(page_url, match.group(1)))
+        return sorted(urls)
+
+    @staticmethod
+    def _looks_relevant(js: str) -> bool:
+        return any(hint in js for hint in AES_HINTS)
+
+    @staticmethod
+    def _resolve_expr(expr: str, js: str, start_pos: int | None = None) -> str | None:
+        expr = expr.strip()
+
+        literal = STRING_LITERAL_RE.fullmatch(expr)
+        if literal:
+            return literal.group(1)
+
+        # Prefer a nearby assignment in the same local scope before falling back
+        # to a bundle-wide search. Minified bundles often reuse short variable
+        # names like `t`, so a global search is easily tricked by unrelated code.
+        if start_pos is not None:
+            window_start = max(0, start_pos - 2000)
+            local_js = js[window_start:start_pos]
+            local_assign_re = re.compile(
+                rf"""(?:const|let|var)?\s*{re.escape(expr)}\s*=\s*['"]([^'"]{{8,128}})['"]""",
+                re.S,
+            )
+            local_matches = list(local_assign_re.finditer(local_js))
+            if local_matches:
+                return local_matches[-1].group(1)
+
+            # Minified bundles often pass the key around as a function parameter.
+            # If we can spot a nearby function signature containing this name and
+            # a default string literal, prefer that over a bundle-wide search.
+            param_default_re = re.compile(
+                rf"""{re.escape(expr)}\s*=\s*['"]([^'"]{{8,128}})['"]""",
+                re.S,
+            )
+            param_default_matches = list(param_default_re.finditer(local_js))
+            if param_default_matches:
+                return param_default_matches[-1].group(1)
+
+        assign_re = re.compile(
+            rf"""(?:const|let|var)?\s*{re.escape(expr)}\s*=\s*['"]([^'"]{{8,128}})['"]""",
+            re.S,
+        )
+        match = assign_re.search(js)
+        if match:
+            return match.group(1)
+
+        return None
+
+    @classmethod
+    def _find_aes_material(cls, js: str) -> list[dict[str, str | None]]:
+        matches: list[dict[str, str | None]] = []
+        for match in KEY_CANDIDATE_RE.finditer(js):
+            key_expr = match.group("key").strip()
+            iv_expr = match.group("iv").strip()
+            matches.append(
+                {
+                    "key_expr": key_expr,
+                    "iv_expr": iv_expr,
+                    "key_value": cls._resolve_expr(key_expr, js, match.start()),
+                    "iv_value": cls._resolve_expr(iv_expr, js, match.start()),
+                }
+            )
+        return matches
+
+    @staticmethod
+    def _validate_crypto_material(key: str, iv: str) -> None:
+        key_length = len(key.encode("utf-8"))
+        if key_length not in (16, 24, 32):
+            raise ValueError(f"Incorrect AES key length ({key_length} bytes)")
+
+        iv_length = len(iv.encode("utf-8"))
+        if iv_length != AES.block_size:
+            raise ValueError(f"Incorrect AES IV length ({iv_length} bytes)")
+
+    async def discover_crypto_material(self) -> tuple[str, str]:
+        """Discover the AES key and IV from the public web app bundles."""
+        parsed = urlparse(self._base_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        candidate_pages = [
+            urljoin(origin, "/login"),
+            urljoin(origin, "/"),
+        ]
+
+        seen_scripts: set[str] = set()
+        for page_url in dict.fromkeys(candidate_pages):
+            try:
+                async with self._session.get(page_url, timeout=20) as resp:
+                    resp.raise_for_status()
+                    html = await resp.text()
+            except Exception:
+                continue
+
+            script_urls = self._extract_script_urls(page_url, html)
+            for script_url in script_urls:
+                if script_url in seen_scripts:
+                    continue
+                seen_scripts.add(script_url)
+
+                try:
+                    async with self._session.get(script_url, timeout=30) as resp:
+                        resp.raise_for_status()
+                        js = await resp.text()
+                except Exception:
+                    continue
+
+                if not self._looks_relevant(js):
+                    continue
+
+                for material in self._find_aes_material(js):
+                    iv_value = material.get("iv_value")
+                    if not isinstance(iv_value, str):
+                        continue
+
+                    key_value = iv_value
+                    _LOGGER.warning(
+                        "Discovered Hanchu crypto candidate from %s: iv_expr=%r using iv/key=%r",
+                        script_url,
+                        material.get("iv_expr"),
+                        iv_value,
+                    )
+                    try:
+                        self._validate_crypto_material(key_value, iv_value)
+                    except ValueError as err:
+                        _LOGGER.warning(
+                            "Rejected Hanchu crypto candidate from %s: %s",
+                            script_url,
+                            err,
+                        )
+                        continue
+                    return key_value, iv_value
+
+        raise ApiCallError("Could not automatically discover the Hanchu AES key/IV from the web app.")
 
     async def _post_encrypted(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self.jwt_is_expired():

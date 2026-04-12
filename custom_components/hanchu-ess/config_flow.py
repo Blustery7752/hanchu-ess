@@ -17,6 +17,7 @@ from .const import (
     CONF_SERIAL,
     CONF_BASE_URL,
     CONF_KEY,
+    CONF_IV,
     CONF_SCAN_INTERVAL,
     DEFAULT_BASE_URL,
     DEFAULT_SCAN_INTERVAL,
@@ -55,34 +56,46 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     base_url=user_input[CONF_BASE_URL],
                     serial=None,
                     jwt=user_input[CONF_JWT],
-                    key=user_input[CONF_KEY],
+                    key="",
                 )
                 try:
-                    stations = await api.query_station_list()
+                    key, iv = await api.discover_crypto_material()
                 except ApiCallError:
-                    errors["base"] = "cannot_connect"
+                    errors["base"] = "cannot_resolve_crypto"
                 else:
-                    if not stations:
-                        errors["base"] = "no_stations"
+                    api = HanchuESSApi(
+                        session=session,
+                        base_url=user_input[CONF_BASE_URL],
+                        serial=None,
+                        jwt=user_input[CONF_JWT],
+                        key=key,
+                        iv=iv,
+                    )
+                    try:
+                        stations = await api.query_station_list()
+                    except ApiCallError:
+                        errors["base"] = "cannot_connect"
                     else:
-                        self._user_input = user_input
-                        self._station_choices = {
-                            station["stationId"]: station
-                            for station in stations
-                            if isinstance(station.get("stationId"), str) and station.get("stationId")
-                        }
-                        if not self._station_choices:
+                        if not stations:
                             errors["base"] = "no_stations"
-                        elif len(self._station_choices) == 1:
-                            only_station_id = next(iter(self._station_choices))
-                            return await self._async_create_entry_for_station(only_station_id)
                         else:
-                            return await self.async_step_select_station()
+                            self._user_input = {**user_input, CONF_KEY: key, CONF_IV: iv}
+                            self._station_choices = {
+                                station["stationId"]: station
+                                for station in stations
+                                if isinstance(station.get("stationId"), str) and station.get("stationId")
+                            }
+                            if not self._station_choices:
+                                errors["base"] = "no_stations"
+                            elif len(self._station_choices) == 1:
+                                only_station_id = next(iter(self._station_choices))
+                                return await self._async_create_entry_for_station(only_station_id)
+                            else:
+                                return await self.async_step_select_station()
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_JWT): str,
-                vol.Required(CONF_KEY): str,
                 vol.Optional(CONF_BASE_URL, default=DEFAULT_BASE_URL): str,
                 vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
             }
@@ -117,6 +130,7 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             serial=None,
             jwt=self._user_input[CONF_JWT],
             key=self._user_input[CONF_KEY],
+            iv=self._user_input[CONF_IV],
             station_id=station_id,
         )
         station_info = await api.fetch_station_info(station_id)
@@ -159,14 +173,26 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
                 base_url=merged.get(CONF_BASE_URL, DEFAULT_BASE_URL),
                 serial=None,
                 jwt=jwt,
-                key=merged.get(CONF_KEY, ""),
+                key="",
+            )
+            try:
+                key, iv = await api.discover_crypto_material()
+            except ApiCallError:
+                return await self._show_form(errors={"base": "cannot_resolve_crypto"}, last_input=user_input)
+            api = HanchuESSApi(
+                session=session,
+                base_url=merged.get(CONF_BASE_URL, DEFAULT_BASE_URL),
+                serial=None,
+                jwt=jwt,
+                key=key,
+                iv=iv,
             )
             try:
                 stations = await api.query_station_list()
             except ApiCallError:
                 return await self._show_form(errors={"base": "cannot_connect"}, last_input=user_input)
 
-            self._pending_input = user_input
+            self._pending_input = {**user_input, CONF_KEY: key, CONF_IV: iv}
             self._station_choices = {
                 station["stationId"]: station
                 for station in stations
@@ -219,6 +245,7 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
             serial=None,
             jwt=merged.get(CONF_JWT, ""),
             key=merged.get(CONF_KEY, ""),
+            iv=merged.get(CONF_IV),
             station_id=station_id,
         )
         await api.resolve_inverter_serial(station_id)
@@ -232,7 +259,6 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Optional(CONF_JWT, default=(last_input or data).get(CONF_JWT, "")): str,
-                vol.Optional(CONF_KEY, default=(last_input or data).get(CONF_KEY, "")): str,
                 vol.Optional(CONF_SCAN_INTERVAL, default=(last_input or data).get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): int,
             }
         )

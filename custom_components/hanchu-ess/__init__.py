@@ -15,6 +15,7 @@ from .const import (
     CONF_SERIAL,
     CONF_BASE_URL,
     CONF_KEY,
+    CONF_IV,
     CONF_SCAN_INTERVAL,
 )
 from .api import HanchuESSApi
@@ -57,6 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         serial=data.get(CONF_SERIAL),
         jwt=data[CONF_JWT],
         key=data[CONF_KEY],
+        iv=data.get(CONF_IV),
         station_id=data.get(CONF_STATION_ID),
     )
 
