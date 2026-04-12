@@ -1,7 +1,8 @@
 DOMAIN = "hanchu-ess"
 PLATFORMS = ["sensor"]
 DEFAULT_BASE_URL = "https://iess3.hanchuess.com/gateway/"
-CONF_JWT = "jwt"
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
 CONF_STATION_ID = "station_id"
 CONF_SERIAL = "serial"
 CONF_BASE_URL = "base_url"

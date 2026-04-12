@@ -41,9 +41,6 @@ services for some controls
 
 ## Setup
 
-> [!NOTE]
-> The current integration requires values captured from an authenticated Hanchu ESS session.
-
 ### Prerequisites
 
 - A working Hanchu ESS account
@@ -54,7 +51,8 @@ services for some controls
 
 The config flow currently asks for:
 
-- `JWT (access-token)`
+- `Username`
+- `Password`
 - `Base URL`
 - `Scan interval`
 
@@ -64,21 +62,12 @@ The default base URL is:
 https://iess3.hanchuess.com/gateway/
 ```
 
-### Finding Your JWT
-
-* Visit [The iESS3 Portal](https://iess3.hanchuess.com/login) and log out if necessary
-* Open the Dev Console (CTRL + Shift + J / Cmd + Option + J) and open the Network tab
-* Log in to iESS3 using your username and password
-* Click the `account` request
-* Click the `Preview` tab in the request pane
-* The JWT is the `data` (not including the quotes)
-
 ### Adding the Integration
 
 1. In Home Assistant, go to **Settings > Devices & services**.
 2. Select **Add Integration**.
 3. Search for **Hanchu ESS**.
-4. Enter your JWT, base URL, and scan interval.
+4. Enter your Hanchu username, password, base URL, and scan interval.
 5. The integration will discover your stations.
 6. Select the station to use if more than one station is discovered.
 
@@ -150,19 +139,13 @@ data:
 
 After setup, open the integration options to update:
 
-- JWT/access token
+- Username
+- Password
+- Base URL
 - Scan interval
 - Selected station
 
 ## Troubleshooting
-
-### Token Expired
-
-The JWT has an expiry time. If setup or polling fails because the token is
-expired, retrieve a fresh token and update the integration options.
-
-You can set up an Automation to notify you when the sensors become unavailable to
-prompt you to update the JWT. They currently expire after one month.
 
 ### Cannot Connect
 
@@ -170,12 +153,11 @@ Check that:
 
 - Home Assistant can reach the Hanchu ESS cloud API
 - The base URL is correct
-- The JWT is valid
+- Your Hanchu username and password are valid
 - Your account has at least one station
 
 ## Known Limitations
 
-- Setup still requires a manually supplied JWT from an authenticated browser session.
 - The integration depends on an undocumented cloud API that may change.
 - Local inverter communication is not currently supported.
 

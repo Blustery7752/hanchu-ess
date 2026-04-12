@@ -7,7 +7,7 @@ from typing import Any, Dict
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import HanchuESSApi, ApiCallError, ExpiredTokenError, UnauthorizedError
+from .api import HanchuESSApi, ApiCallError, UnauthorizedError
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class HanchuCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             if grid_charge_limit is not None:
                 data["dtu_ac_chg_soc_lmt"] = grid_charge_limit
             return data
-        except (ExpiredTokenError, UnauthorizedError) as err:
+        except UnauthorizedError as err:
         # This is what will make sensors become unavailable
             raise UpdateFailed(f"Authentication failed: {err}") from err
         except ApiCallError as err:

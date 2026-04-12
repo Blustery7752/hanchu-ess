@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 import base64
 import json
@@ -10,7 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 from aiohttp import ClientResponseError, ClientSession
 from aiohttp.client_exceptions import ClientConnectorError
-from Crypto.Cipher import AES
+from Crypto.Cipher import AES, PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from Crypto.Util.Padding import pad
 
@@ -79,9 +80,12 @@ class HanchuESSApi:
         session: ClientSession,
         base_url: str,
         serial: str | None,
-        jwt: str,
         key: str,
         iv: str | None = None,
+        jwt: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        rsa_public_key: str | None = None,
         station_id: str | None = None,
     ) -> None:
         if not base_url.endswith("/"):
@@ -89,30 +93,33 @@ class HanchuESSApi:
         self._session = session
         self._base_url = base_url
         self._serial = serial or ""
-        self._jwt = jwt
+        self._jwt = jwt or ""
         self._key = key
         self._iv = iv or key
+        self._username = username or ""
+        self._password = password or ""
+        self._rsa_public_key = rsa_public_key or ""
         self._station_id = station_id or ""
 
-    # ---- JWT helpers -----------------------------------------------------
     @staticmethod
     def _b64url_decode(data: str) -> bytes:
-        data += "=" * (-len(data) % 4)  # add padding
+        data += "=" * (-len(data) % 4)
         return base64.urlsafe_b64decode(data)
 
     def jwt_is_expired(self) -> bool:
         """Decode JWT (without verifying signature) and check exp <= now."""
+        if not self._jwt:
+            return True
         try:
             parts = self._jwt.split(".")
             if len(parts) != 3:
                 return True
             payload = json.loads(self._b64url_decode(parts[1]).decode("utf-8"))
             exp = int(payload.get("exp", 0))
-            return exp <= int(time.time()) + 60  # add 60s safety margin
+            return exp <= int(time.time()) + 60
         except Exception:
             return True
 
-    # ---- crypto ----------------------------------------------------------
     def _encrypt_body(self, obj: Any) -> str:
         iv = self._iv.encode("utf-8")
         key_bytes = self._key.encode("utf-8")
@@ -125,8 +132,11 @@ class HanchuESSApi:
         ciphertext = cipher.encrypt(padded)
         return base64.b64encode(ciphertext).decode("utf-8")
 
-    def _headers(self) -> dict[str, str]:
-        return {"content-type": "text/plain", "access-token": self._jwt}
+    def _headers(self, *, include_auth: bool = True) -> dict[str, str]:
+        headers = {"content-type": "text/plain"}
+        if include_auth and self._jwt:
+            headers["access-token"] = self._jwt
+        return headers
 
     @property
     def serial(self) -> str:
@@ -141,6 +151,9 @@ class HanchuESSApi:
 
     def set_station_id(self, station_id: str) -> None:
         self._station_id = station_id
+
+    def set_jwt(self, jwt: str) -> None:
+        self._jwt = jwt
 
     @staticmethod
     def _extract_script_urls(page_url: str, html: str) -> list[str]:
@@ -161,9 +174,6 @@ class HanchuESSApi:
         if literal:
             return literal.group(1)
 
-        # Prefer a nearby assignment in the same local scope before falling back
-        # to a bundle-wide search. Minified bundles often reuse short variable
-        # names like `t`, so a global search is easily tricked by unrelated code.
         if start_pos is not None:
             window_start = max(0, start_pos - 2000)
             local_js = js[window_start:start_pos]
@@ -175,9 +185,6 @@ class HanchuESSApi:
             if local_matches:
                 return local_matches[-1].group(1)
 
-            # Minified bundles often pass the key around as a function parameter.
-            # If we can spot a nearby function signature containing this name and
-            # a default string literal, prefer that over a bundle-wide search.
             param_default_re = re.compile(
                 rf"""{re.escape(expr)}\s*=\s*['"]([^'"]{{8,128}})['"]""",
                 re.S,
@@ -215,7 +222,7 @@ class HanchuESSApi:
     @staticmethod
     def _validate_crypto_material(key: str, iv: str) -> None:
         key_length = len(key.encode("utf-8"))
-        if key_length not in (16, 24, 32):
+        if key_length != 16:
             raise ValueError(f"Incorrect AES key length ({key_length} bytes)")
 
         iv_length = len(iv.encode("utf-8"))
@@ -243,11 +250,7 @@ class HanchuESSApi:
                 for line in candidate.splitlines()
                 if "BEGIN" not in line and "END" not in line and line.strip()
             )
-            return {
-                "pem": candidate,
-                "base64_der": base64_der,
-                "bits": key.size_in_bits(),
-            }
+            return {"pem": candidate, "base64_der": base64_der, "bits": key.size_in_bits()}
 
         try:
             raw = base64.b64decode(candidate, validate=True)
@@ -256,11 +259,7 @@ class HanchuESSApi:
             return None
 
         pem = key.export_key(format="PEM").decode("ascii")
-        return {
-            "pem": pem,
-            "base64_der": candidate,
-            "bits": key.size_in_bits(),
-        }
+        return {"pem": pem, "base64_der": candidate, "bits": key.size_in_bits()}
 
     @classmethod
     def _extract_rsa_candidates(cls, js: str) -> list[dict[str, str | int]]:
@@ -311,17 +310,16 @@ class HanchuESSApi:
                 score += 1
         return score
 
+    @staticmethod
+    def _candidate_pages(base_url: str) -> list[str]:
+        parsed = urlparse(base_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        return [urljoin(origin, "/login"), urljoin(origin, "/")]
+
     async def discover_crypto_material(self) -> tuple[str, str]:
         """Discover the AES key and IV from the public web app bundles."""
-        parsed = urlparse(self._base_url)
-        origin = f"{parsed.scheme}://{parsed.netloc}"
-        candidate_pages = [
-            urljoin(origin, "/login"),
-            urljoin(origin, "/"),
-        ]
-
         seen_scripts: set[str] = set()
-        for page_url in dict.fromkeys(candidate_pages):
+        for page_url in self._candidate_pages(self._base_url):
             try:
                 async with self._session.get(page_url, timeout=20) as resp:
                     resp.raise_for_status()
@@ -329,8 +327,7 @@ class HanchuESSApi:
             except Exception:
                 continue
 
-            script_urls = self._extract_script_urls(page_url, html)
-            for script_url in script_urls:
+            for script_url in self._extract_script_urls(page_url, html):
                 if script_url in seen_scripts:
                     continue
                 seen_scripts.add(script_url)
@@ -372,15 +369,8 @@ class HanchuESSApi:
 
     async def discover_rsa_public_key(self) -> str:
         """Discover the RSA public key from the public web app bundles."""
-        parsed = urlparse(self._base_url)
-        origin = f"{parsed.scheme}://{parsed.netloc}"
-        candidate_pages = [
-            urljoin(origin, "/login"),
-            urljoin(origin, "/"),
-        ]
-
         seen_scripts: set[str] = set()
-        for page_url in dict.fromkeys(candidate_pages):
+        for page_url in self._candidate_pages(self._base_url):
             try:
                 async with self._session.get(page_url, timeout=20) as resp:
                     resp.raise_for_status()
@@ -388,8 +378,7 @@ class HanchuESSApi:
             except Exception:
                 continue
 
-            script_urls = self._extract_script_urls(page_url, html)
-            for script_url in script_urls:
+            for script_url in self._extract_script_urls(page_url, html):
                 if script_url in seen_scripts:
                     continue
                 seen_scripts.add(script_url)
@@ -419,30 +408,102 @@ class HanchuESSApi:
 
         raise ApiCallError("Could not automatically discover the Hanchu RSA public key from the web app.")
 
-    async def _post_encrypted(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if self.jwt_is_expired():
-            raise ExpiredTokenError("JWT appears to be expired (exp claim). Provide a fresh token.")
+    def _rsa_encrypt_password(self, password: str) -> str:
+        if not self._rsa_public_key:
+            raise ApiCallError("RSA public key is not available for login.")
+        key = RSA.import_key(self._rsa_public_key.encode("ascii"))
+        cipher = PKCS1_v1_5.new(key)
+        encrypted = cipher.encrypt(password.encode("utf-8"))
+        return base64.b64encode(encrypted).decode("ascii")
 
-        url = self._base_url + endpoint
+    async def async_login(self) -> str:
+        """Authenticate with username/password and store the JWT."""
+        if not self._username or not self._password:
+            raise ApiCallError("Username and password are required for login.")
+
+        payload = {
+            "account": self._username,
+            "pwd": self._rsa_encrypt_password(self._password),
+        }
+        url = self._base_url + "identify/auth/login/account"
         body = self._encrypt_body(payload)
-        headers = self._headers()
+        headers = self._headers(include_auth=False)
 
         try:
             async with self._session.post(url, data=body, headers=headers, timeout=20) as resp:
-                if resp.status == 401:
-                    raise UnauthorizedError("Server returned 401. Your JWT is invalid or expired.")
+                if resp.status in (401, 403):
+                    raise UnauthorizedError("Server rejected the supplied Hanchu account credentials.")
                 resp.raise_for_status()
                 text = await resp.text()
         except ApiCallError:
             raise
-        except ClientResponseError as e:
-            raise ApiCallError(f"HTTP error: {e.status}: {e.message}") from e
-        except ClientConnectorError as e:
-            raise ApiCallError(f"Cannot connect to host: {e}") from e
-        except asyncio.TimeoutError as e:
-            raise ApiCallError("Request timed out") from e
-        except Exception as e:
-            raise ApiCallError(f"Unexpected error: {e}") from e
+        except ClientResponseError as err:
+            raise ApiCallError(f"HTTP error: {err.status}: {err.message}") from err
+        except ClientConnectorError as err:
+            raise ApiCallError(f"Cannot connect to host: {err}") from err
+        except asyncio.TimeoutError as err:
+            raise ApiCallError("Login request timed out") from err
+        except Exception as err:
+            raise ApiCallError(f"Unexpected login error: {err}") from err
+
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as err:
+            raise ApiCallError("Login response was not valid JSON.") from err
+
+        data = payload.get("data")
+        jwt = None
+        if isinstance(data, str):
+            jwt = data
+        elif isinstance(data, dict):
+            for key_name in ("token", "accessToken", "jwt", "access_token"):
+                candidate = data.get(key_name)
+                if isinstance(candidate, str) and candidate:
+                    jwt = candidate
+                    break
+
+        if not jwt:
+            raise ApiCallError(f"Login response did not include a JWT: {payload}")
+
+        self._jwt = jwt
+        return jwt
+
+    async def _ensure_authenticated(self) -> None:
+        if not self._jwt or self.jwt_is_expired():
+            await self.async_login()
+
+    async def _post_encrypted(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+        await self._ensure_authenticated()
+
+        url = self._base_url + endpoint
+        body = self._encrypt_body(payload)
+
+        try:
+            async with self._session.post(
+                url, data=body, headers=self._headers(), timeout=20
+            ) as resp:
+                if resp.status == 401:
+                    await self.async_login()
+                    async with self._session.post(
+                        url, data=body, headers=self._headers(), timeout=20
+                    ) as retry_resp:
+                        if retry_resp.status == 401:
+                            raise UnauthorizedError("Server returned 401 after re-authentication.")
+                        retry_resp.raise_for_status()
+                        text = await retry_resp.text()
+                else:
+                    resp.raise_for_status()
+                    text = await resp.text()
+        except ApiCallError:
+            raise
+        except ClientResponseError as err:
+            raise ApiCallError(f"HTTP error: {err.status}: {err.message}") from err
+        except ClientConnectorError as err:
+            raise ApiCallError(f"Cannot connect to host: {err}") from err
+        except asyncio.TimeoutError as err:
+            raise ApiCallError("Request timed out") from err
+        except Exception as err:
+            raise ApiCallError(f"Unexpected error: {err}") from err
 
         try:
             data = json.loads(text)
@@ -450,9 +511,7 @@ class HanchuESSApi:
             return {"_raw": text}
         return data if isinstance(data, dict) else {"_raw": data}
 
-    # ---- request get data -------------------------------------------------
     async def fetch_power_chart(self) -> Dict[str, Any]:
-        """Fetch inverter data from the API."""
         payload = await self._post_encrypted(
             "platform/pcsPlatformStation/powerChart",
             {"pcsSn": self._serial},
@@ -582,18 +641,16 @@ class HanchuESSApi:
         return data
 
 
-# Exceptions --------------------------------------------------------------
-
 class ApiCallError(Exception):
     """Base exception for API errors."""
 
 
 class UnauthorizedError(ApiCallError):
-    """401 / invalid JWT."""
+    """Authentication failed."""
 
 
 class ExpiredTokenError(ApiCallError):
-    """JWT expired by exp claim."""
+    """Retained for compatibility with older callers."""
 
 
 class DeviceSettingError(ApiCallError):

@@ -10,7 +10,8 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     DOMAIN,
     PLATFORMS,
-    CONF_JWT,
+    CONF_USERNAME,
+    CONF_PASSWORD,
     CONF_STATION_ID,
     CONF_SERIAL,
     CONF_BASE_URL,
@@ -57,9 +58,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session=session,
         base_url=data[CONF_BASE_URL],
         serial=data.get(CONF_SERIAL),
-        jwt=data[CONF_JWT],
         key=data[CONF_KEY],
         iv=data.get(CONF_IV),
+        username=data[CONF_USERNAME],
+        password=data[CONF_PASSWORD],
+        rsa_public_key=data.get(CONF_RSA_PUBLIC_KEY),
         station_id=data.get(CONF_STATION_ID),
     )
 

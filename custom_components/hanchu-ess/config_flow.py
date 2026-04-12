@@ -1,41 +1,27 @@
 from __future__ import annotations
+
 from typing import Any
-import base64
-import json
-import time
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import ApiCallError, HanchuESSApi
+from .api import ApiCallError, HanchuESSApi, UnauthorizedError
 from .const import (
-    DOMAIN,
-    CONF_JWT,
-    CONF_STATION_ID,
-    CONF_SERIAL,
     CONF_BASE_URL,
-    CONF_KEY,
     CONF_IV,
+    CONF_KEY,
+    CONF_PASSWORD,
     CONF_RSA_PUBLIC_KEY,
     CONF_SCAN_INTERVAL,
+    CONF_SERIAL,
+    CONF_STATION_ID,
+    CONF_USERNAME,
     DEFAULT_BASE_URL,
     DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
 )
-
-def _jwt_is_expired(jwt: str) -> bool:
-    try:
-        parts = jwt.split(".")
-        if len(parts) != 3:
-            return True
-        s = parts[1]
-        s += "=" * (-len(s) % 4)  # padding
-        payload = json.loads(base64.urlsafe_b64decode(s).decode("utf-8"))
-        exp = int(payload.get("exp", 0))
-        return exp <= int(time.time()) + 60
-    except Exception:
-        return True
 
 
 class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -48,61 +34,17 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            if _jwt_is_expired(user_input[CONF_JWT]):
-                errors[CONF_JWT] = "token_expired"
-            else:
-                session = async_get_clientsession(self.hass)
-                api = HanchuESSApi(
-                    session=session,
-                    base_url=user_input[CONF_BASE_URL],
-                    serial=None,
-                    jwt=user_input[CONF_JWT],
-                    key="",
-                )
-                try:
-                    key, iv = await api.discover_crypto_material()
-                    rsa_public_key = await api.discover_rsa_public_key()
-                except ApiCallError:
-                    errors["base"] = "cannot_resolve_crypto"
-                else:
-                    api = HanchuESSApi(
-                        session=session,
-                        base_url=user_input[CONF_BASE_URL],
-                        serial=None,
-                        jwt=user_input[CONF_JWT],
-                        key=key,
-                        iv=iv,
-                    )
-                    try:
-                        stations = await api.query_station_list()
-                    except ApiCallError:
-                        errors["base"] = "cannot_connect"
-                    else:
-                        if not stations:
-                            errors["base"] = "no_stations"
-                        else:
-                            self._user_input = {
-                                **user_input,
-                                CONF_KEY: key,
-                                CONF_IV: iv,
-                                CONF_RSA_PUBLIC_KEY: rsa_public_key,
-                            }
-                            self._station_choices = {
-                                station["stationId"]: station
-                                for station in stations
-                                if isinstance(station.get("stationId"), str) and station.get("stationId")
-                            }
-                            if not self._station_choices:
-                                errors["base"] = "no_stations"
-                            elif len(self._station_choices) == 1:
-                                only_station_id = next(iter(self._station_choices))
-                                return await self._async_create_entry_for_station(only_station_id)
-                            else:
-                                return await self.async_step_select_station()
+            errors = await self._async_prepare_account(user_input)
+            if not errors:
+                if len(self._station_choices) == 1:
+                    only_station_id = next(iter(self._station_choices))
+                    return await self._async_create_entry_for_station(only_station_id)
+                return await self.async_step_select_station()
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_JWT): str,
+                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_PASSWORD): str,
                 vol.Optional(CONF_BASE_URL, default=DEFAULT_BASE_URL): str,
                 vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
             }
@@ -122,12 +64,61 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             station_id: self._station_label(station)
             for station_id, station in self._station_choices.items()
         }
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_STATION_ID): vol.In(station_options),
-            }
-        )
+        schema = vol.Schema({vol.Required(CONF_STATION_ID): vol.In(station_options)})
         return self.async_show_form(step_id="select_station", data_schema=schema, errors=errors)
+
+    async def _async_prepare_account(self, user_input: dict[str, Any]) -> dict[str, str]:
+        session = async_get_clientsession(self.hass)
+        discovery_api = HanchuESSApi(
+            session=session,
+            base_url=user_input[CONF_BASE_URL],
+            serial=None,
+            key="",
+            username=user_input[CONF_USERNAME],
+            password=user_input[CONF_PASSWORD],
+        )
+
+        try:
+            key, iv = await discovery_api.discover_crypto_material()
+            rsa_public_key = await discovery_api.discover_rsa_public_key()
+        except ApiCallError:
+            return {"base": "cannot_resolve_crypto"}
+
+        api = HanchuESSApi(
+            session=session,
+            base_url=user_input[CONF_BASE_URL],
+            serial=None,
+            key=key,
+            iv=iv,
+            username=user_input[CONF_USERNAME],
+            password=user_input[CONF_PASSWORD],
+            rsa_public_key=rsa_public_key,
+        )
+        try:
+            await api.async_login()
+            stations = await api.query_station_list()
+        except UnauthorizedError:
+            return {"base": "invalid_auth"}
+        except ApiCallError:
+            return {"base": "cannot_connect"}
+
+        if not stations:
+            return {"base": "no_stations"}
+
+        self._user_input = {
+            **user_input,
+            CONF_KEY: key,
+            CONF_IV: iv,
+            CONF_RSA_PUBLIC_KEY: rsa_public_key,
+        }
+        self._station_choices = {
+            station["stationId"]: station
+            for station in stations
+            if isinstance(station.get("stationId"), str) and station.get("stationId")
+        }
+        if not self._station_choices:
+            return {"base": "no_stations"}
+        return {}
 
     async def _async_create_entry_for_station(self, station_id: str) -> FlowResult:
         session = async_get_clientsession(self.hass)
@@ -135,14 +126,20 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             session=session,
             base_url=self._user_input[CONF_BASE_URL],
             serial=None,
-            jwt=self._user_input[CONF_JWT],
             key=self._user_input[CONF_KEY],
             iv=self._user_input[CONF_IV],
+            username=self._user_input[CONF_USERNAME],
+            password=self._user_input[CONF_PASSWORD],
+            rsa_public_key=self._user_input[CONF_RSA_PUBLIC_KEY],
             station_id=station_id,
         )
         station_info = await api.fetch_station_info(station_id)
         serial = await api.resolve_inverter_serial(station_id)
-        station_name = station_info.get("stationName") or self._station_choices.get(station_id, {}).get("stationName") or station_id
+        station_name = (
+            station_info.get("stationName")
+            or self._station_choices.get(station_id, {}).get("stationName")
+            or station_id
+        )
         return self.async_create_entry(
             title=f"Hanchu {station_name}".strip(),
             data={**self._user_input, CONF_STATION_ID: station_id, CONF_SERIAL: serial},
@@ -171,62 +168,15 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
             merged = {**self._entry.data, **self._entry.options, **user_input}
-            jwt = merged.get(CONF_JWT)
-            if jwt and _jwt_is_expired(jwt):
-                return await self._show_form(errors={CONF_JWT: "token_expired"}, last_input=user_input)
-            session = async_get_clientsession(self.hass)
-            api = HanchuESSApi(
-                session=session,
-                base_url=merged.get(CONF_BASE_URL, DEFAULT_BASE_URL),
-                serial=None,
-                jwt=jwt,
-                key="",
-            )
-            try:
-                key, iv = await api.discover_crypto_material()
-                rsa_public_key = await api.discover_rsa_public_key()
-            except ApiCallError:
-                return await self._show_form(errors={"base": "cannot_resolve_crypto"}, last_input=user_input)
-            api = HanchuESSApi(
-                session=session,
-                base_url=merged.get(CONF_BASE_URL, DEFAULT_BASE_URL),
-                serial=None,
-                jwt=jwt,
-                key=key,
-                iv=iv,
-            )
-            try:
-                stations = await api.query_station_list()
-            except ApiCallError:
-                return await self._show_form(errors={"base": "cannot_connect"}, last_input=user_input)
-
-            self._pending_input = {
-                **user_input,
-                CONF_KEY: key,
-                CONF_IV: iv,
-                CONF_RSA_PUBLIC_KEY: rsa_public_key,
-            }
-            self._station_choices = {
-                station["stationId"]: station
-                for station in stations
-                if isinstance(station.get("stationId"), str) and station.get("stationId")
-            }
-            if not self._station_choices:
-                return await self._show_form(errors={"base": "no_stations"}, last_input=user_input)
-
-            requested_station_id = merged.get(CONF_STATION_ID)
-            if requested_station_id in self._station_choices and len(self._station_choices) == 1:
-                return await self._async_create_options_entry(requested_station_id)
-
-            if requested_station_id in self._station_choices and len(self._station_choices) > 1:
-                return await self.async_step_select_station(
-                    {CONF_STATION_ID: requested_station_id}
-                )
-
-            if len(self._station_choices) == 1:
-                return await self._async_create_options_entry(next(iter(self._station_choices)))
-
-            return await self.async_step_select_station()
+            errors = await self._async_prepare_account(merged, user_input)
+            if not errors:
+                requested_station_id = merged.get(CONF_STATION_ID)
+                if requested_station_id in self._station_choices:
+                    return await self._async_create_options_entry(requested_station_id)
+                if len(self._station_choices) == 1:
+                    return await self._async_create_options_entry(next(iter(self._station_choices)))
+                return await self.async_step_select_station()
+            return await self._show_form(errors=errors, last_input=user_input)
         return await self._show_form()
 
     async def async_step_select_station(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -242,12 +192,59 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
             station_id: HanchuConfigFlow._station_label(station)
             for station_id, station in self._station_choices.items()
         }
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_STATION_ID): vol.In(station_options),
-            }
-        )
+        schema = vol.Schema({vol.Required(CONF_STATION_ID): vol.In(station_options)})
         return self.async_show_form(step_id="select_station", data_schema=schema, errors=errors)
+
+    async def _async_prepare_account(
+        self, merged: dict[str, Any], raw_input: dict[str, Any]
+    ) -> dict[str, str]:
+        session = async_get_clientsession(self.hass)
+        discovery_api = HanchuESSApi(
+            session=session,
+            base_url=merged.get(CONF_BASE_URL, DEFAULT_BASE_URL),
+            serial=None,
+            key="",
+            username=merged.get(CONF_USERNAME),
+            password=merged.get(CONF_PASSWORD),
+        )
+        try:
+            key, iv = await discovery_api.discover_crypto_material()
+            rsa_public_key = await discovery_api.discover_rsa_public_key()
+        except ApiCallError:
+            return {"base": "cannot_resolve_crypto"}
+
+        api = HanchuESSApi(
+            session=session,
+            base_url=merged.get(CONF_BASE_URL, DEFAULT_BASE_URL),
+            serial=None,
+            key=key,
+            iv=iv,
+            username=merged.get(CONF_USERNAME),
+            password=merged.get(CONF_PASSWORD),
+            rsa_public_key=rsa_public_key,
+        )
+        try:
+            await api.async_login()
+            stations = await api.query_station_list()
+        except UnauthorizedError:
+            return {"base": "invalid_auth"}
+        except ApiCallError:
+            return {"base": "cannot_connect"}
+
+        self._pending_input = {
+            **raw_input,
+            CONF_KEY: key,
+            CONF_IV: iv,
+            CONF_RSA_PUBLIC_KEY: rsa_public_key,
+        }
+        self._station_choices = {
+            station["stationId"]: station
+            for station in stations
+            if isinstance(station.get("stationId"), str) and station.get("stationId")
+        }
+        if not self._station_choices:
+            return {"base": "no_stations"}
+        return {}
 
     async def _async_create_options_entry(self, station_id: str) -> FlowResult:
         merged = {**self._entry.data, **self._entry.options, **self._pending_input}
@@ -256,9 +253,11 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
             session=session,
             base_url=merged.get(CONF_BASE_URL, DEFAULT_BASE_URL),
             serial=None,
-            jwt=merged.get(CONF_JWT, ""),
             key=merged.get(CONF_KEY, ""),
             iv=merged.get(CONF_IV),
+            username=merged.get(CONF_USERNAME, ""),
+            password=merged.get(CONF_PASSWORD, ""),
+            rsa_public_key=merged.get(CONF_RSA_PUBLIC_KEY),
             station_id=station_id,
         )
         await api.resolve_inverter_serial(station_id)
@@ -269,10 +268,16 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
 
     async def _show_form(self, errors=None, last_input=None) -> FlowResult:
         data = {**self._entry.data, **self._entry.options}
+        source = last_input or data
         schema = vol.Schema(
             {
-                vol.Optional(CONF_JWT, default=(last_input or data).get(CONF_JWT, "")): str,
-                vol.Optional(CONF_SCAN_INTERVAL, default=(last_input or data).get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): int,
+                vol.Optional(CONF_USERNAME, default=source.get(CONF_USERNAME, "")): str,
+                vol.Optional(CONF_PASSWORD, default=source.get(CONF_PASSWORD, "")): str,
+                vol.Optional(CONF_BASE_URL, default=source.get(CONF_BASE_URL, DEFAULT_BASE_URL)): str,
+                vol.Optional(
+                    CONF_SCAN_INTERVAL,
+                    default=source.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): int,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors or {})
