@@ -16,6 +16,7 @@ from .const import (
     CONF_BASE_URL,
     CONF_KEY,
     CONF_IV,
+    CONF_RSA_PUBLIC_KEY,
     CONF_SCAN_INTERVAL,
 )
 from .api import HanchuESSApi
@@ -73,6 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "serial": api.serial,
         "station_id": api.station_id,
+        "rsa_public_key": data.get(CONF_RSA_PUBLIC_KEY),
     }
 
     store = hass.data.setdefault(DOMAIN, {})
@@ -81,6 +83,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "serial": api.serial,
         "station_id": api.station_id,
+        "rsa_public_key": data.get(CONF_RSA_PUBLIC_KEY),
     }
 
     # Register the service once

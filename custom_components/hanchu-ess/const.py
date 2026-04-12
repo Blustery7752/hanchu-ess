@@ -7,6 +7,7 @@ CONF_SERIAL = "serial"
 CONF_BASE_URL = "base_url"
 CONF_KEY = "key"
 CONF_IV = "iv"
+CONF_RSA_PUBLIC_KEY = "rsa_public_key"
 CONF_SCAN_INTERVAL = "scan_interval"
 DEFAULT_SCAN_INTERVAL = 300 # seconds
 API_ENDPOINT = "platform/pcs/powerChart"

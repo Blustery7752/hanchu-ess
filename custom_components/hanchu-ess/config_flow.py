@@ -18,6 +18,7 @@ from .const import (
     CONF_BASE_URL,
     CONF_KEY,
     CONF_IV,
+    CONF_RSA_PUBLIC_KEY,
     CONF_SCAN_INTERVAL,
     DEFAULT_BASE_URL,
     DEFAULT_SCAN_INTERVAL,
@@ -60,6 +61,7 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 try:
                     key, iv = await api.discover_crypto_material()
+                    rsa_public_key = await api.discover_rsa_public_key()
                 except ApiCallError:
                     errors["base"] = "cannot_resolve_crypto"
                 else:
@@ -79,7 +81,12 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         if not stations:
                             errors["base"] = "no_stations"
                         else:
-                            self._user_input = {**user_input, CONF_KEY: key, CONF_IV: iv}
+                            self._user_input = {
+                                **user_input,
+                                CONF_KEY: key,
+                                CONF_IV: iv,
+                                CONF_RSA_PUBLIC_KEY: rsa_public_key,
+                            }
                             self._station_choices = {
                                 station["stationId"]: station
                                 for station in stations
@@ -177,6 +184,7 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
             )
             try:
                 key, iv = await api.discover_crypto_material()
+                rsa_public_key = await api.discover_rsa_public_key()
             except ApiCallError:
                 return await self._show_form(errors={"base": "cannot_resolve_crypto"}, last_input=user_input)
             api = HanchuESSApi(
@@ -192,7 +200,12 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
             except ApiCallError:
                 return await self._show_form(errors={"base": "cannot_connect"}, last_input=user_input)
 
-            self._pending_input = {**user_input, CONF_KEY: key, CONF_IV: iv}
+            self._pending_input = {
+                **user_input,
+                CONF_KEY: key,
+                CONF_IV: iv,
+                CONF_RSA_PUBLIC_KEY: rsa_public_key,
+            }
             self._station_choices = {
                 station["stationId"]: station
                 for station in stations

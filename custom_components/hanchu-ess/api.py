@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 from aiohttp import ClientResponseError, ClientSession
 from aiohttp.client_exceptions import ClientConnectorError
 from Crypto.Cipher import AES
+from Crypto.PublicKey import RSA
 from Crypto.Util.Padding import pad
 
 DEVICE_TYPE_DTU = "2"
@@ -57,6 +58,15 @@ KEY_CANDIDATE_RE = re.compile(
     re.X | re.S,
 )
 STRING_LITERAL_RE = re.compile(r"""['"]([^'"]{8,128})['"]""")
+SET_PUBLIC_KEY_RE = re.compile(
+    r"""setPublicKey\s*\(\s*["'](?P<key>[^"']{64,})["']\s*\)""",
+    re.S,
+)
+PEM_PUBLIC_KEY_RE = re.compile(
+    r"""-----BEGIN PUBLIC KEY-----(?P<body>.*?)-----END PUBLIC KEY-----""",
+    re.S,
+)
+LONG_B64_RE = re.compile(r"""["']([A-Za-z0-9+/=]{100,800})["']""")
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -212,6 +222,95 @@ class HanchuESSApi:
         if iv_length != AES.block_size:
             raise ValueError(f"Incorrect AES IV length ({iv_length} bytes)")
 
+    @staticmethod
+    def _looks_like_spki_base64(candidate: str) -> bool:
+        return candidate.startswith(("MIG", "MII")) and len(candidate) >= 100
+
+    @staticmethod
+    def _normalize_pem_body(body: str) -> str:
+        return re.sub(r"\s+", "", body)
+
+    @staticmethod
+    def _try_import_rsa_public_key(candidate: str) -> dict[str, str | int] | None:
+        candidate = candidate.strip()
+        if "BEGIN PUBLIC KEY" in candidate:
+            try:
+                key = RSA.import_key(candidate.encode("ascii"))
+            except (ValueError, IndexError, TypeError):
+                return None
+            base64_der = "".join(
+                line.strip()
+                for line in candidate.splitlines()
+                if "BEGIN" not in line and "END" not in line and line.strip()
+            )
+            return {
+                "pem": candidate,
+                "base64_der": base64_der,
+                "bits": key.size_in_bits(),
+            }
+
+        try:
+            raw = base64.b64decode(candidate, validate=True)
+            key = RSA.import_key(raw)
+        except (ValueError, IndexError, TypeError):
+            return None
+
+        pem = key.export_key(format="PEM").decode("ascii")
+        return {
+            "pem": pem,
+            "base64_der": candidate,
+            "bits": key.size_in_bits(),
+        }
+
+    @classmethod
+    def _extract_rsa_candidates(cls, js: str) -> list[dict[str, str | int]]:
+        found: list[dict[str, str | int]] = []
+
+        for match in SET_PUBLIC_KEY_RE.finditer(js):
+            raw = match.group("key").strip()
+            parsed = cls._try_import_rsa_public_key(raw)
+            if parsed:
+                found.append({"source": "setPublicKey", "raw": raw, **parsed})
+
+        for match in PEM_PUBLIC_KEY_RE.finditer(js):
+            body = cls._normalize_pem_body(match.group("body"))
+            pem = f"-----BEGIN PUBLIC KEY-----\n{body}\n-----END PUBLIC KEY-----"
+            parsed = cls._try_import_rsa_public_key(pem)
+            if parsed:
+                found.append({"source": "pem_block", "raw": pem, **parsed})
+
+        for match in LONG_B64_RE.finditer(js):
+            raw = match.group(1).strip()
+            if not cls._looks_like_spki_base64(raw):
+                continue
+            parsed = cls._try_import_rsa_public_key(raw)
+            if parsed:
+                found.append({"source": "generic_base64", "raw": raw, **parsed})
+
+        dedup: dict[str, dict[str, str | int]] = {}
+        for item in found:
+            base64_der = item.get("base64_der")
+            if isinstance(base64_der, str):
+                dedup[base64_der] = item
+        return list(dedup.values())
+
+    @staticmethod
+    def _score_rsa_js_relevance(js: str) -> int:
+        score = 0
+        for hint in (
+            "setPublicKey",
+            "encrypt(",
+            "JSEncrypt",
+            "RSA",
+            "publicKey",
+            "pwd",
+            "account",
+            "login",
+        ):
+            if hint in js:
+                score += 1
+        return score
+
     async def discover_crypto_material(self) -> tuple[str, str]:
         """Discover the AES key and IV from the public web app bundles."""
         parsed = urlparse(self._base_url)
@@ -270,6 +369,55 @@ class HanchuESSApi:
                     return key_value, iv_value
 
         raise ApiCallError("Could not automatically discover the Hanchu AES key/IV from the web app.")
+
+    async def discover_rsa_public_key(self) -> str:
+        """Discover the RSA public key from the public web app bundles."""
+        parsed = urlparse(self._base_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        candidate_pages = [
+            urljoin(origin, "/login"),
+            urljoin(origin, "/"),
+        ]
+
+        seen_scripts: set[str] = set()
+        for page_url in dict.fromkeys(candidate_pages):
+            try:
+                async with self._session.get(page_url, timeout=20) as resp:
+                    resp.raise_for_status()
+                    html = await resp.text()
+            except Exception:
+                continue
+
+            script_urls = self._extract_script_urls(page_url, html)
+            for script_url in script_urls:
+                if script_url in seen_scripts:
+                    continue
+                seen_scripts.add(script_url)
+
+                try:
+                    async with self._session.get(script_url, timeout=30) as resp:
+                        resp.raise_for_status()
+                        js = await resp.text()
+                except Exception:
+                    continue
+
+                if self._score_rsa_js_relevance(js) == 0:
+                    continue
+
+                for candidate in self._extract_rsa_candidates(js):
+                    pem = candidate.get("pem")
+                    bits = candidate.get("bits")
+                    if not isinstance(pem, str):
+                        continue
+                    _LOGGER.warning(
+                        "Discovered Hanchu RSA public key candidate from %s: source=%s bits=%s",
+                        script_url,
+                        candidate.get("source"),
+                        bits,
+                    )
+                    return pem
+
+        raise ApiCallError("Could not automatically discover the Hanchu RSA public key from the web app.")
 
     async def _post_encrypted(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self.jwt_is_expired():
