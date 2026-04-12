@@ -1,0 +1,52 @@
+fast_charge_discharge:
+  name: Fast charge/discharge
+  description: Start/stop fast charge/discharge on the inverter.
+  fields:
+    mode:
+      name: Mode
+      description: Select action to perform
+      required: true
+      selector:
+        select:
+          options:
+            - start_charge
+            - stop_charge
+            - start_discharge
+            - stop_discharge
+    duration:
+      name: Duration (seconds)
+      description: Required for start actions; ignored for stop actions
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 86400
+          mode: box
+          unit_of_measurement: s
+    serial:
+      name: Inverter serial
+      description: Target a specific inverter if you have multiple
+      required: false
+      selector:
+        text:
+set_grid_charge_limit:
+  name: Set grid charge limit
+  description: Set the AC/grid charge SoC limit on the inverter.
+  fields:
+    percent:
+      name: Charge limit (%)
+      description: Maximum AC/grid charge percentage to apply
+      required: true
+      selector:
+        number:
+          min: 10
+          max: 100
+          step: 1
+          mode: box
+          unit_of_measurement: "%"
+    serial:
+      name: Inverter serial
+      description: Target a specific inverter if you have multiple
+      required: false
+      selector:
+        text:

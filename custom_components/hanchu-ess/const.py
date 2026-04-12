@@ -1,0 +1,11 @@
+DOMAIN = "hanchu-ess"
+PLATFORMS = ["sensor"]
+DEFAULT_BASE_URL = "https://iess3.hanchuess.com/gateway/"
+CONF_JWT = "jwt"
+CONF_STATION_ID = "station_id"
+CONF_SERIAL = "serial"
+CONF_BASE_URL = "base_url"
+CONF_KEY = "key"
+CONF_SCAN_INTERVAL = "scan_interval"
+DEFAULT_SCAN_INTERVAL = 300 # seconds
+API_ENDPOINT = "platform/pcs/powerChart"

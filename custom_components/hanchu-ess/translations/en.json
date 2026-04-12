@@ -1,0 +1,67 @@
+{
+  "title": "Hanchu ESS",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Hanchu ESS",
+        "description": "Paste your JWT and encryption key. The integration will discover your stations.",
+        "data": {
+          "jwt": "JWT (access-token)",
+          "base_url": "Base URL",
+          "key": "AES key",
+          "scan_interval": "Scan interval (seconds)"
+        }
+      },
+      "select_station": {
+        "title": "Select station",
+        "description": "Choose which Hanchu ESS station this integration should use.",
+        "data": {
+          "station_id": "Station"
+        }
+      }
+    },
+    "error": {
+      "token_expired": "Your JWT appears to be expired (check exp claim).",
+      "unauthorized": "Unauthorized. JWT invalid or expired.",
+      "cannot_connect": "Cannot connect to the API. Check network and settings.",
+      "no_stations": "No stations were found for this account.",
+      "invalid_station": "The selected station is no longer available."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hanchu ESS options",
+        "description": "Update your JWT, encryption key, or polling interval.",
+        "data": {
+          "jwt": "JWT (access-token)",
+          "scan_interval": "Scan interval (seconds)",
+          "key": "Account-specific Hanchu encryption key"
+        }
+      },
+      "select_station": {
+        "title": "Select station",
+        "description": "Choose which Hanchu ESS station this integration should use.",
+        "data": {
+          "station_id": "Station"
+        }
+      }
+    }
+  },
+  "services": {
+    "set_grid_charge_limit": {
+      "name": "Set grid charge limit",
+      "description": "Set the AC/grid charge SoC limit on the inverter.",
+      "fields": {
+        "percent": {
+          "name": "Charge limit (%)",
+          "description": "Maximum AC/grid charge percentage to apply."
+        },
+        "serial": {
+          "name": "Inverter serial",
+          "description": "Target a specific inverter if you have multiple."
+        }
+      }
+    }
+  }
+}
