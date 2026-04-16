@@ -91,6 +91,8 @@ SENSOR_SPECS = [
      "state_class": SensorStateClass.MEASUREMENT, "value": _battery_power_signed()},
     {"name": "Grid Meter Power", "unit": "W", "device_class": SensorDeviceClass.POWER,
      "state_class": SensorStateClass.MEASUREMENT, "value": _float_key("meterPPwr")},
+    {"name": "Ext Solar Power", "unit": "W", "device_class": SensorDeviceClass.POWER,
+     "state_class": SensorStateClass.MEASUREMENT, "value": _float_key("bypMeterTotalPower")},
 
     # Battery
     {"name": "Battery SoC", "unit": "%", "device_class": SensorDeviceClass.BATTERY,
