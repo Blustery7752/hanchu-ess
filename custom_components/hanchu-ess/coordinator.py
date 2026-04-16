@@ -7,20 +7,25 @@ from typing import Any, Dict
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import HanchuESSApi, ApiCallError, UnauthorizedError
-from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
+from .api import (
+    DEFAULT_DEVICE_SETTING_KEYS,
+    HanchuESSApi,
+    ApiCallError,
+    UnauthorizedError,
+)
+from .const import DOMAIN, DEFAULT_CONFIG_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class HanchuCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
-    """Coordinator to fetch Hanchu ESS data on a schedule."""
+class HanchuTelemetryCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
+    """Coordinator to fetch live Hanchu ESS telemetry on a schedule."""
 
     def __init__(self, hass: HomeAssistant, api: HanchuESSApi, scan_interval: int | None = None) -> None:
         super().__init__(
             hass,
             _LOGGER,
-            name=f"{DOMAIN} coordinator",
+            name=f"{DOMAIN} telemetry coordinator",
             update_interval=timedelta(seconds=scan_interval or DEFAULT_SCAN_INTERVAL),
         )
         self.api = api
@@ -38,4 +43,32 @@ class HanchuCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             raise UpdateFailed(f"Authentication failed: {err}") from err
         except ApiCallError as err:
             # Surfaces as a retryable coordinator failure (shows in HA logs/UI)
+            raise UpdateFailed(str(err)) from err
+
+
+class HanchuConfigCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
+    """Coordinator to fetch slower-changing Hanchu ESS device settings."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        api: HanchuESSApi,
+        scan_interval: int | None = None,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN} config coordinator",
+            update_interval=timedelta(seconds=scan_interval or DEFAULT_CONFIG_SCAN_INTERVAL),
+        )
+        self.api = api
+
+    async def _async_update_data(self) -> Dict[str, Any]:
+        """Fetch configured device settings using the standard DTU key list."""
+        try:
+            settings = await self.api.get_device_settings(DEFAULT_DEVICE_SETTING_KEYS)
+            return settings if isinstance(settings, dict) else {}
+        except UnauthorizedError as err:
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+        except ApiCallError as err:
             raise UpdateFailed(str(err)) from err

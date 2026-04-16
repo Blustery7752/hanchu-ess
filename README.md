@@ -54,7 +54,8 @@ The config flow currently asks for:
 - `Username`
 - `Password`
 - `Base URL`
-- `Scan interval`
+- `Telemetry scan interval`
+- `Config scan interval`
 
 The default base URL is:
 
@@ -67,7 +68,7 @@ https://iess3.hanchuess.com/gateway/
 1. In Home Assistant, go to **Settings > Devices & services**.
 2. Select **Add Integration**.
 3. Search for **Hanchu ESS**.
-4. Enter your Hanchu username, password, base URL, and scan interval.
+4. Enter your Hanchu username, password, base URL, telemetry scan interval, and config scan interval.
 5. The integration will discover your stations.
 6. Select the station to use if more than one station is discovered.
 
@@ -142,7 +143,8 @@ After setup, open the integration options to update:
 - Username
 - Password
 - Base URL
-- Scan interval
+- Telemetry scan interval
+- Config scan interval
 - Selected station
 
 ## Troubleshooting
