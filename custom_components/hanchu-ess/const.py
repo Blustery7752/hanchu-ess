@@ -1,5 +1,5 @@
 DOMAIN = "hanchu-ess"
-PLATFORMS = ["sensor", "number"]
+PLATFORMS = ["sensor", "number", "time", "switch"]
 DEFAULT_BASE_URL = "https://iess3.hanchuess.com/gateway/"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
