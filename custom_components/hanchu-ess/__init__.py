@@ -21,6 +21,7 @@ from .const import (
     CONF_RSA_PUBLIC_KEY,
     CONF_SCAN_INTERVAL,
     CONF_CONFIG_SCAN_INTERVAL,
+    CONF_WORK_MODE_OPTIONS,
 )
 from .api import HanchuESSApi
 from .coordinator import HanchuConfigCoordinator, HanchuTelemetryCoordinator
@@ -94,6 +95,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "serial": api.serial,
         "station_id": api.station_id,
         "rsa_public_key": data.get(CONF_RSA_PUBLIC_KEY),
+        "work_mode_options": data.get(CONF_WORK_MODE_OPTIONS, []),
     }
 
     store = hass.data.setdefault(DOMAIN, {})
@@ -104,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "serial": api.serial,
         "station_id": api.station_id,
         "rsa_public_key": data.get(CONF_RSA_PUBLIC_KEY),
+        "work_mode_options": data.get(CONF_WORK_MODE_OPTIONS, []),
     }
 
     # Register the service once

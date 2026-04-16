@@ -17,8 +17,10 @@ from Crypto.Util.Padding import pad
 
 DEVICE_TYPE_DTU = "2"
 DEVICE_SETTING_GRID_CHARGE_LIMIT = "DTU_AC_CHG_SOC_LMT"
+DEVICE_SETTING_WORK_MODE = "WORK_MODE_CMB"
+MENU_APP_VERSION = "4.0.3"
 DEFAULT_DEVICE_SETTING_KEYS = [
-    "WORK_MODE_CMB",
+    DEVICE_SETTING_WORK_MODE,
     "CHG_PWR_LMT",
     "DSCHG_PWR_LMT",
     DEVICE_SETTING_GRID_CHARGE_LIMIT,
@@ -574,6 +576,55 @@ class HanchuESSApi:
         if isinstance(payload.get("data"), dict):
             return payload["data"]
         return payload
+
+    async def fetch_menu(self) -> dict[str, Any]:
+        """Fetch inverter menu metadata for the current serial."""
+        return await self._post_encrypted(
+            "app/v4/menu",
+            {
+                "sn": self._serial,
+                "devEnv": "iess",
+                "menuType": "0",
+                "appVer": MENU_APP_VERSION,
+            },
+        )
+
+    async def get_work_mode_options(self) -> list[dict[str, str]]:
+        """Return supported work mode options from inverter menu metadata."""
+        payload = await self.fetch_menu()
+        menu_data = payload.get("data")
+        if not isinstance(menu_data, dict):
+            return []
+
+        for section in menu_data.values():
+            if not isinstance(section, dict):
+                continue
+            items = section.get("items")
+            if not isinstance(items, list):
+                continue
+            for group in items:
+                if not isinstance(group, list):
+                    continue
+                for item in group:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("itemCodeSignal") != DEVICE_SETTING_WORK_MODE and item.get("itemCode") != DEVICE_SETTING_WORK_MODE:
+                        continue
+                    raw_options = item.get("optVal")
+                    if not isinstance(raw_options, str) or not raw_options.strip():
+                        return []
+                    try:
+                        parsed = json.loads(raw_options)
+                    except json.JSONDecodeError as err:
+                        raise ApiCallError(f"Invalid WORK_MODE_CMB options payload: {raw_options!r}") from err
+                    if not isinstance(parsed, list):
+                        return []
+                    return [
+                        {"name": str(option["name"]), "value": str(option["value"])}
+                        for option in parsed
+                        if isinstance(option, dict) and option.get("name") is not None and option.get("value") is not None
+                    ]
+        return []
 
     async def get_grid_charge_limit(self) -> int | None:
         """Return the configured DTU AC charge SoC limit as an integer percentage."""

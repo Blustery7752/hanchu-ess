@@ -19,6 +19,7 @@ from .const import (
     CONF_SERIAL,
     CONF_STATION_ID,
     CONF_USERNAME,
+    CONF_WORK_MODE_OPTIONS,
     DEFAULT_BASE_URL,
     DEFAULT_CONFIG_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
@@ -145,9 +146,18 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             or self._station_choices.get(station_id, {}).get("stationName")
             or station_id
         )
+        try:
+            work_mode_options = await api.get_work_mode_options()
+        except ApiCallError:
+            work_mode_options = []
         return self.async_create_entry(
             title=f"Hanchu {station_name}".strip(),
-            data={**self._user_input, CONF_STATION_ID: station_id, CONF_SERIAL: serial},
+            data={
+                **self._user_input,
+                CONF_STATION_ID: station_id,
+                CONF_SERIAL: serial,
+                CONF_WORK_MODE_OPTIONS: work_mode_options,
+            },
         )
 
     @staticmethod
@@ -266,9 +276,18 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
             station_id=station_id,
         )
         await api.resolve_inverter_serial(station_id)
+        try:
+            work_mode_options = await api.get_work_mode_options()
+        except ApiCallError:
+            work_mode_options = []
         return self.async_create_entry(
             title="Options",
-            data={**self._pending_input, CONF_STATION_ID: station_id, CONF_SERIAL: api.serial},
+            data={
+                **self._pending_input,
+                CONF_STATION_ID: station_id,
+                CONF_SERIAL: api.serial,
+                CONF_WORK_MODE_OPTIONS: work_mode_options,
+            },
         )
 
     async def _show_form(self, errors=None, last_input=None) -> FlowResult:
