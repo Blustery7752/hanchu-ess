@@ -1,5 +1,5 @@
+PLATFORMS = ["sensor", "number", "time", "switch", "select"]
 DOMAIN = "hanchu_ess"
-PLATFORMS = ["sensor"]
 DEFAULT_BASE_URL = "https://iess3.hanchuess.com/gateway/"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
@@ -9,6 +9,9 @@ CONF_BASE_URL = "base_url"
 CONF_KEY = "key"
 CONF_IV = "iv"
 CONF_RSA_PUBLIC_KEY = "rsa_public_key"
+CONF_WORK_MODE_OPTIONS = "work_mode_options"
 CONF_SCAN_INTERVAL = "scan_interval"
+CONF_CONFIG_SCAN_INTERVAL = "config_scan_interval"
 DEFAULT_SCAN_INTERVAL = 300 # seconds
+DEFAULT_CONFIG_SCAN_INTERVAL = 3600 # seconds
 API_ENDPOINT = "platform/pcs/powerChart"

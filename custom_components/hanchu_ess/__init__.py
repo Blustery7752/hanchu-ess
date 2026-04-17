@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from typing import Any
 import voluptuous as vol
 
@@ -19,9 +20,13 @@ from .const import (
     CONF_IV,
     CONF_RSA_PUBLIC_KEY,
     CONF_SCAN_INTERVAL,
+    CONF_CONFIG_SCAN_INTERVAL,
+    CONF_WORK_MODE_OPTIONS,
 )
 from .api import HanchuESSApi
-from .coordinator import HanchuCoordinator
+from .coordinator import HanchuConfigCoordinator, HanchuTelemetryCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 # service constants
 SERVICE_FAST_CD = "fast_charge_discharge"
@@ -69,24 +74,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if data.get(CONF_STATION_ID):
         await api.resolve_inverter_serial(data[CONF_STATION_ID])
 
-    coordinator = HanchuCoordinator(hass, api, data.get(CONF_SCAN_INTERVAL))
+    coordinator = HanchuTelemetryCoordinator(hass, api, data.get(CONF_SCAN_INTERVAL))
     await coordinator.async_config_entry_first_refresh()
+
+    config_coordinator = HanchuConfigCoordinator(hass, api, data.get(CONF_CONFIG_SCAN_INTERVAL))
+    try:
+        await config_coordinator.async_config_entry_first_refresh()
+    except Exception as err:  # pragma: no cover - defensive startup fallback
+        _LOGGER.warning(
+            "Initial Hanchu ESS settings refresh failed for %s; number entities will load as unavailable until the next refresh: %s",
+            api.serial or data.get(CONF_SERIAL) or "unknown device",
+            err,
+        )
+        config_coordinator.async_set_updated_data({})
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
+        "config_coordinator": config_coordinator,
         "serial": api.serial,
         "station_id": api.station_id,
         "rsa_public_key": data.get(CONF_RSA_PUBLIC_KEY),
+        "work_mode_options": data.get(CONF_WORK_MODE_OPTIONS, []),
     }
 
     store = hass.data.setdefault(DOMAIN, {})
     store[entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
+        "config_coordinator": config_coordinator,
         "serial": api.serial,
         "station_id": api.station_id,
         "rsa_public_key": data.get(CONF_RSA_PUBLIC_KEY),
+        "work_mode_options": data.get(CONF_WORK_MODE_OPTIONS, []),
     }
 
     # Register the service once
@@ -97,7 +117,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if not isinstance(d, dict) or "api" not in d:
                     continue
                 if serial is None or d.get("serial") == serial or getattr(d["api"], "_serial", None) == serial:
-                    return d["api"], d["coordinator"]
+                    return d["api"], d["coordinator"], d.get("config_coordinator")
             raise ValueError("No matching Hanchu ESS entry found for given serial.")
 
         async def handle_fast_cd(call):
@@ -110,17 +130,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if act in (2, 3) and duration is None:
                 raise vol.Invalid("duration is required for start_charge/start_discharge")
 
-            api_obj, coord = await _resolve_api_for_serial(serial)
+            api_obj, coord, config_coord = await _resolve_api_for_serial(serial)
             await api_obj.fast_charge_discharge(act=act, duration=duration)
             await coord.async_request_refresh()
+            if config_coord is not None:
+                await config_coord.async_request_refresh()
 
         async def handle_set_grid_charge_limit(call):
             percent = call.data[ATTR_PERCENT]
             serial = call.data.get(ATTR_SERIAL)
 
-            api_obj, coord = await _resolve_api_for_serial(serial)
+            api_obj, coord, config_coord = await _resolve_api_for_serial(serial)
             await api_obj.set_grid_charge_limit(percent=percent)
             await coord.async_request_refresh()
+            if config_coord is not None:
+                await config_coord.async_request_refresh()
 
         hass.services.async_register(
             DOMAIN,

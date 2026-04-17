@@ -9,7 +9,8 @@
           "username": "Username",
           "password": "Password",
           "base_url": "Base URL",
-          "scan_interval": "Scan interval (seconds)"
+          "scan_interval": "Telemetry scan interval (seconds)",
+          "config_scan_interval": "Config scan interval (seconds)"
         }
       },
       "select_station": {
@@ -37,7 +38,8 @@
           "username": "Username",
           "password": "Password",
           "base_url": "Base URL",
-          "scan_interval": "Scan interval (seconds)"
+          "scan_interval": "Telemetry scan interval (seconds)",
+          "config_scan_interval": "Config scan interval (seconds)"
         }
       },
       "select_station": {

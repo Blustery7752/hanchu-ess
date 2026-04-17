@@ -13,7 +13,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, CONF_SERIAL
-from .coordinator import HanchuCoordinator
+from .coordinator import HanchuConfigCoordinator, HanchuTelemetryCoordinator
 
 Transform = Callable[[dict], Any]
 
@@ -175,7 +175,8 @@ SENSOR_SPECS = [
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
     entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: HanchuCoordinator = entry_data["coordinator"]
+    coordinator: HanchuTelemetryCoordinator = entry_data["coordinator"]
+    config_coordinator: HanchuConfigCoordinator = entry_data["config_coordinator"]
     serial = entry_data.get("serial") or entry.data.get(CONF_SERIAL)
 
     entities: list[SensorEntity] = []
@@ -187,12 +188,12 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities):
         except Exception:
             continue
 
-    entities.append(HanchuDiagnosticsSensor(coordinator, serial))
+    entities.append(HanchuDiagnosticsSensor(coordinator, config_coordinator, serial))
     async_add_entities(entities)
 
 
-class BaseHanchuSensor(CoordinatorEntity[HanchuCoordinator], SensorEntity):
-    def __init__(self, coordinator: HanchuCoordinator, serial: str, name_suffix: str) -> None:
+class BaseHanchuSensor(CoordinatorEntity[HanchuTelemetryCoordinator], SensorEntity):
+    def __init__(self, coordinator: HanchuTelemetryCoordinator, serial: str, name_suffix: str) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
         self._attr_name = name_suffix
@@ -207,7 +208,7 @@ class BaseHanchuSensor(CoordinatorEntity[HanchuCoordinator], SensorEntity):
 
 
 class HanchuTransformedSensor(BaseHanchuSensor, RestoreEntity):
-    def __init__(self, coordinator: HanchuCoordinator, serial: str, spec: dict[str, Any]) -> None:
+    def __init__(self, coordinator: HanchuTelemetryCoordinator, serial: str, spec: dict[str, Any]) -> None:
         super().__init__(coordinator, serial, spec["name"])
         self._spec = spec
         self._attr_native_unit_of_measurement = spec.get("unit")
@@ -290,8 +291,14 @@ class HanchuTransformedSensor(BaseHanchuSensor, RestoreEntity):
 
 
 class HanchuDiagnosticsSensor(BaseHanchuSensor):
-    def __init__(self, coordinator: HanchuCoordinator, serial: str) -> None:
+    def __init__(
+        self,
+        coordinator: HanchuTelemetryCoordinator,
+        config_coordinator: HanchuConfigCoordinator,
+        serial: str,
+    ) -> None:
         super().__init__(coordinator, serial, "Diagnostics")
+        self._config_coordinator = config_coordinator
 
     @property
     def native_value(self):
@@ -299,4 +306,6 @@ class HanchuDiagnosticsSensor(BaseHanchuSensor):
 
     @property
     def extra_state_attributes(self):
-        return self.coordinator.data or {}
+        attrs = dict(self.coordinator.data or {})
+        attrs["device_settings"] = self._config_coordinator.data or {}
+        return attrs

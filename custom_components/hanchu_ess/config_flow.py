@@ -10,6 +10,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import ApiCallError, HanchuESSApi, UnauthorizedError
 from .const import (
     CONF_BASE_URL,
+    CONF_CONFIG_SCAN_INTERVAL,
     CONF_IV,
     CONF_KEY,
     CONF_PASSWORD,
@@ -18,7 +19,9 @@ from .const import (
     CONF_SERIAL,
     CONF_STATION_ID,
     CONF_USERNAME,
+    CONF_WORK_MODE_OPTIONS,
     DEFAULT_BASE_URL,
+    DEFAULT_CONFIG_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -47,6 +50,9 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD): str,
                 vol.Optional(CONF_BASE_URL, default=DEFAULT_BASE_URL): str,
                 vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
+                vol.Optional(
+                    CONF_CONFIG_SCAN_INTERVAL, default=DEFAULT_CONFIG_SCAN_INTERVAL
+                ): int,
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -140,9 +146,18 @@ class HanchuConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             or self._station_choices.get(station_id, {}).get("stationName")
             or station_id
         )
+        try:
+            work_mode_options = await api.get_work_mode_options()
+        except ApiCallError:
+            work_mode_options = []
         return self.async_create_entry(
             title=f"Hanchu {station_name}".strip(),
-            data={**self._user_input, CONF_STATION_ID: station_id, CONF_SERIAL: serial},
+            data={
+                **self._user_input,
+                CONF_STATION_ID: station_id,
+                CONF_SERIAL: serial,
+                CONF_WORK_MODE_OPTIONS: work_mode_options,
+            },
         )
 
     @staticmethod
@@ -261,9 +276,18 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
             station_id=station_id,
         )
         await api.resolve_inverter_serial(station_id)
+        try:
+            work_mode_options = await api.get_work_mode_options()
+        except ApiCallError:
+            work_mode_options = []
         return self.async_create_entry(
             title="Options",
-            data={**self._pending_input, CONF_STATION_ID: station_id, CONF_SERIAL: api.serial},
+            data={
+                **self._pending_input,
+                CONF_STATION_ID: station_id,
+                CONF_SERIAL: api.serial,
+                CONF_WORK_MODE_OPTIONS: work_mode_options,
+            },
         )
 
     async def _show_form(self, errors=None, last_input=None) -> FlowResult:
@@ -277,6 +301,10 @@ class HanchuOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=source.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): int,
+                vol.Optional(
+                    CONF_CONFIG_SCAN_INTERVAL,
+                    default=source.get(CONF_CONFIG_SCAN_INTERVAL, DEFAULT_CONFIG_SCAN_INTERVAL),
                 ): int,
             }
         )
