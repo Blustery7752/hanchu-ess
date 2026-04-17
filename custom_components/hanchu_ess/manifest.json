@@ -1,7 +1,7 @@
 {
   "domain": "hanchu_ess",
   "name": "Hanchu ESS",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "documentation": "https://github.com/Blustery7752/hanchu-ess",
   "requirements": ["pycryptodome==3.20.0"],
   "codeowners": ["@Blustery7752"],
