@@ -34,7 +34,7 @@ services for some controls
 
 ### Manual
 
-1. Copy `custom_components/hanchu-ess` into your Home Assistant
+1. Copy `custom_components/hanchu_ess` into your Home Assistant
    `custom_components` directory.
 2. Restart Home Assistant.
 3. Add the integration from **Settings > Devices & services**.
@@ -178,7 +178,7 @@ Please open issues on GitHub with:
 This repository follows the standard Home Assistant custom integration layout:
 
 ```text
-custom_components/hanchu-ess/
+custom_components/hanchu_ess/
 ```
 
 Before opening a pull request, run the available validation checks and test the
